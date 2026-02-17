@@ -3,7 +3,7 @@
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol};
 
 #[contracttype]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct VaultMeta {
     pub owner: Address,
     pub balance: i128,

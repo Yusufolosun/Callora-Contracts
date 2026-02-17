@@ -8,7 +8,7 @@ fn init_and_balance() {
     let contract_id = env.register_contract(None, CalloraVault {});
     let client = CalloraVaultClient::new(&env, &contract_id);
 
-    client.init(&owner, Some(1000));
+    client.init(&owner, &Some(1000));
     assert_eq!(client.balance(), 1000);
 }
 
@@ -19,7 +19,7 @@ fn deposit_and_deduct() {
     let contract_id = env.register_contract(None, CalloraVault {});
     let client = CalloraVaultClient::new(&env, &contract_id);
 
-    client.init(&owner, Some(100));
+    client.init(&owner, &Some(100));
     client.deposit(&200);
     assert_eq!(client.balance(), 300);
     client.deduct(&50);

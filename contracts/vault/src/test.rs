@@ -55,7 +55,6 @@ fn deposit_and_deduct() {
 
 #[test]
 fn init_none_balance() {
-fn batch_deduct_success() {
     let env = Env::default();
     let owner = Address::generate(&env);
     let contract_id = env.register(CalloraVault {}, ());
@@ -71,6 +70,15 @@ fn batch_deduct_success() {
     let meta = client.get_meta();
     assert_eq!(meta.owner, owner);
     assert_eq!(meta.balance, 0);
+}
+
+#[test]
+fn batch_deduct_success() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let contract_id = env.register(CalloraVault {}, ());
+    let client = CalloraVaultClient::new(&env, &contract_id);
+
     client.init(&owner, &Some(1000));
     let req1 = Symbol::new(&env, "req1");
     let req2 = Symbol::new(&env, "req2");

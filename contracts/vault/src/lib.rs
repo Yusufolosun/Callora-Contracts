@@ -1,9 +1,6 @@
 #![no_std]
 
-<<<<<<< feature/zero-negative-amount-guard
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol};
-=======
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol};
 
 /// Single item for batch deduct: amount and optional request id for idempotency/tracking.
 #[contracttype]
@@ -12,7 +9,6 @@ pub struct DeductItem {
     pub amount: i128,
     pub request_id: Option<Symbol>,
 }
->>>>>>> main
 
 #[contracttype]
 #[derive(Clone)]
@@ -163,12 +159,9 @@ impl CalloraVault {
     }
 
     /// Deposit increases balance. Callable by owner or designated depositor.
-<<<<<<< feature/zero-negative-amount-guard
     /// Requires amount > 0 to prevent no-op transactions and accidental negative flows.
-=======
     /// Panics if amount is below the configured minimum deposit.
     /// Emits a "deposit" event with amount and new balance.
->>>>>>> main
     pub fn deposit(env: Env, amount: i128) -> i128 {
         assert!(
             amount > 0,

@@ -53,6 +53,55 @@ fn deposit_and_deduct() {
     assert_eq!(client.balance(), 250);
 }
 
+/// Test that verifies consistency between balance() and get_meta() after init, deposit, and deduct.
+/// This ensures that both methods return the same balance value and that the owner remains unchanged.
+#[test]
+fn balance_and_meta_consistency() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let contract_id = env.register(CalloraVault {}, ());
+    let client = CalloraVaultClient::new(&env, &contract_id);
+
+    // Initialize vault with initial balance
+    client.init(&owner, &Some(500));
+
+    // Verify consistency after initialization
+    let meta = client.get_meta();
+    let balance = client.balance();
+    assert_eq!(meta.balance, balance, "balance mismatch after init");
+    assert_eq!(meta.owner, owner, "owner changed after init");
+    assert_eq!(balance, 500, "incorrect balance after init");
+
+    // Deposit and verify consistency
+    client.deposit(&300);
+    let meta = client.get_meta();
+    let balance = client.balance();
+    assert_eq!(meta.balance, balance, "balance mismatch after deposit");
+    assert_eq!(meta.owner, owner, "owner changed after deposit");
+    assert_eq!(balance, 800, "incorrect balance after deposit");
+
+    // Deduct and verify consistency
+    client.deduct(&150);
+    let meta = client.get_meta();
+    let balance = client.balance();
+    assert_eq!(meta.balance, balance, "balance mismatch after deduct");
+    assert_eq!(meta.owner, owner, "owner changed after deduct");
+    assert_eq!(balance, 650, "incorrect balance after deduct");
+
+    // Perform multiple operations and verify final state
+    client.deposit(&100);
+    client.deduct(&50);
+    client.deposit(&25);
+    let meta = client.get_meta();
+    let balance = client.balance();
+    assert_eq!(
+        meta.balance, balance,
+        "balance mismatch after multiple operations"
+    );
+    assert_eq!(meta.owner, owner, "owner changed after multiple operations");
+    assert_eq!(balance, 725, "incorrect final balance");
+}
+
 #[test]
 #[should_panic(expected = "insufficient balance")]
 fn deduct_exact_balance_and_panic() {

@@ -477,14 +477,13 @@ fn init_none_balance() {
     let owner = Address::generate(&env);
     let contract_id = env.register(CalloraVault {}, ());
     let client = CalloraVaultClient::new(&env, &contract_id);
+    let (usdc_address, _, _) = create_usdc(&env, &owner);
 
-    // Call init with None
-    client.init(&owner, &None);
+    env.mock_all_auths();
+    client.init(&owner, &usdc_address, &None, &None);
 
-    // Assert balance is 0
     assert_eq!(client.balance(), 0);
 
-    // Assert get_meta returns correct owner and zero balance
     let meta = client.get_meta();
     assert_eq!(meta.owner, owner);
     assert_eq!(meta.balance, 0);
@@ -663,4 +662,105 @@ fn init_already_initialized_panics() {
     let (usdc_address, _, _) = create_usdc(&env, &owner);
     client.init(&owner, &usdc_address, &Some(100), &None);
     client.init(&owner, &usdc_address, &Some(200), &None); // Should panic
+}
+
+#[test]
+fn batch_deduct_all_succeed() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let contract_id = env.register(CalloraVault {}, ());
+    let client = CalloraVaultClient::new(&env, &contract_id);
+    let (usdc_address, _, _) = create_usdc(&env, &owner);
+
+    env.mock_all_auths();
+    client.init(&owner, &usdc_address, &Some(60), &None);
+    let items = vec![
+        &env,
+        DeductItem {
+            amount: 10,
+            request_id: None,
+        },
+        DeductItem {
+            amount: 20,
+            request_id: None,
+        },
+        DeductItem {
+            amount: 30,
+            request_id: None,
+        },
+    ];
+    let caller = Address::generate(&env);
+    env.mock_all_auths();
+    let new_balance = client.batch_deduct(&caller, &items);
+    assert_eq!(new_balance, 0);
+    assert_eq!(client.balance(), 0);
+}
+
+#[test]
+#[should_panic(expected = "insufficient balance")]
+fn batch_deduct_all_revert() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let contract_id = env.register(CalloraVault {}, ());
+    let client = CalloraVaultClient::new(&env, &contract_id);
+    let (usdc_address, _, _) = create_usdc(&env, &owner);
+
+    env.mock_all_auths();
+    client.init(&owner, &usdc_address, &Some(25), &None);
+    assert_eq!(client.balance(), 25);
+    let items = vec![
+        &env,
+        DeductItem {
+            amount: 10,
+            request_id: None,
+        },
+        DeductItem {
+            amount: 20,
+            request_id: None,
+        },
+        DeductItem {
+            amount: 30,
+            request_id: None,
+        },
+    ];
+    let caller = Address::generate(&env);
+    env.mock_all_auths();
+    client.batch_deduct(&caller, &items);
+}
+
+#[test]
+fn batch_deduct_revert_preserves_balance() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let contract_id = env.register(CalloraVault {}, ());
+    let client = CalloraVaultClient::new(&env, &contract_id);
+    let (usdc_address, _, _) = create_usdc(&env, &owner);
+
+    env.mock_all_auths();
+    client.init(&owner, &usdc_address, &Some(25), &None);
+    assert_eq!(client.balance(), 25);
+    let items = vec![
+        &env,
+        DeductItem {
+            amount: 10,
+            request_id: None,
+        },
+        DeductItem {
+            amount: 20,
+            request_id: None,
+        },
+        DeductItem {
+            amount: 30,
+            request_id: None,
+        },
+    ];
+    let caller = Address::generate(&env);
+    env.mock_all_auths();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.batch_deduct(&caller, &items);
+    }));
+
+    assert!(result.is_err());
+    assert_eq!(client.balance(), 25);
 }

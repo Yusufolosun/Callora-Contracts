@@ -58,7 +58,6 @@ impl CalloraVault {
             owner: owner.clone(),
             balance,
             min_deposit: min_deposit_val,
-
         };
         env.storage()
             .instance()
@@ -69,7 +68,6 @@ impl CalloraVault {
         env.storage()
             .instance()
             .set(&Symbol::new(&env, ADMIN_KEY), &owner);
-
 
         // Emit event: topics = (init, owner), data = balance
         env.events()
@@ -185,7 +183,6 @@ impl CalloraVault {
             .publish((Symbol::new(&env, "deposit"),), (amount, meta.balance));
         meta.balance
     }
-
 
     /// Deduct balance for an API call. Callable by authorized caller (e.g. backend/deployer).
     /// Emits a "deduct" event with caller, optional request_id, amount, and new balance.

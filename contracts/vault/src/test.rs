@@ -105,7 +105,7 @@ fn init_and_balance() {
 fn init_default_zero_balance() {
     let env = Env::default();
     let owner = Address::generate(&env);
-    let contract_id = env.register_contract(None, CalloraVault {});
+    let contract_id = env.register(CalloraVault {}, ());
     let client = CalloraVaultClient::new(&env, &contract_id);
 
     env.mock_all_auths();
@@ -183,6 +183,8 @@ fn balance_and_meta_consistency() {
     assert_eq!(balance, 725, "incorrect final balance");
 }
 
+#[test]
+#[should_panic(expected = "insufficient balance")]
 fn deduct_exact_balance_and_panic() {
     let env = Env::default();
     let owner = Address::generate(&env);
@@ -298,7 +300,6 @@ fn test_distribute_excess_panics() {
     fund_vault(&env, &usdc_admin_client, &vault_address, 100);
     vault.distribute(&admin, &developer, &101);
 }
-
 
 #[test]
 #[should_panic(expected = "amount must be positive")]

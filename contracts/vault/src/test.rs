@@ -37,6 +37,7 @@ fn init_and_balance() {
     let contract_id = env.register(CalloraVault {}, ());
 
     // Call init directly inside as_contract so events are captured
+    env.mock_all_auths();
     let events = env.as_contract(&contract_id, || {
         let (usdc, _, _) = create_usdc(&env, &owner);
         CalloraVault::init(env.clone(), owner.clone(), usdc, Some(1000));
@@ -74,11 +75,115 @@ fn deposit_and_deduct() {
     let client = CalloraVaultClient::new(&env, &contract_id);
 
     let (usdc, _, _) = create_usdc(&env, &owner);
+  env.mock_all_auths();
     client.init(&owner, &usdc, &Some(100));
     client.deposit(&200);
     assert_eq!(client.balance(), 300);
-    client.deduct(&50);
+    env.mock_all_auths();
+    client.deduct(&owner, &50, &None);
     assert_eq!(client.balance(), 250);
+}
+
+/// Test that verifies consistency between balance() and get_meta() after init, deposit, and deduct.
+/// This ensures that both methods return the same balance value and that the owner remains unchanged.
+#[test]
+fn balance_and_meta_consistency() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let contract_id = env.register(CalloraVault {}, ());
+    let client = CalloraVaultClient::new(&env, &contract_id);
+
+    // Initialize vault with initial balance
+    client.init(&owner, &Some(500));
+
+    // Verify consistency after initialization
+    let meta = client.get_meta();
+    let balance = client.balance();
+    assert_eq!(meta.balance, balance, "balance mismatch after init");
+    assert_eq!(meta.owner, owner, "owner changed after init");
+    assert_eq!(balance, 500, "incorrect balance after init");
+
+    // Deposit and verify consistency
+    client.deposit(&300);
+    let meta = client.get_meta();
+    let balance = client.balance();
+    assert_eq!(meta.balance, balance, "balance mismatch after deposit");
+    assert_eq!(meta.owner, owner, "owner changed after deposit");
+    assert_eq!(balance, 800, "incorrect balance after deposit");
+
+    // Deduct and verify consistency
+    client.deduct(&150);
+    let meta = client.get_meta();
+    let balance = client.balance();
+    assert_eq!(meta.balance, balance, "balance mismatch after deduct");
+    assert_eq!(meta.owner, owner, "owner changed after deduct");
+    assert_eq!(balance, 650, "incorrect balance after deduct");
+
+    // Perform multiple operations and verify final state
+    client.deposit(&100);
+    client.deduct(&50);
+    client.deposit(&25);
+    let meta = client.get_meta();
+    let balance = client.balance();
+    assert_eq!(
+        meta.balance, balance,
+        "balance mismatch after multiple operations"
+    );
+    assert_eq!(meta.owner, owner, "owner changed after multiple operations");
+    assert_eq!(balance, 725, "incorrect final balance");
+}
+
+#[test]
+#[should_panic(expected = "insufficient balance")]
+fn deduct_exact_balance_and_panic() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let contract_id = env.register(CalloraVault {}, ());
+    let client = CalloraVaultClient::new(&env, &contract_id);
+
+    client.init(&owner, &Some(100));
+    assert_eq!(client.balance(), 100);
+
+    // Deduct exact balance
+    client.deduct(&100);
+    assert_eq!(client.balance(), 0);
+
+    // Further deduct should panic
+    client.deduct(&1);
+}
+
+#[test]
+fn deduct_event_emission() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let caller = Address::generate(&env);
+    let contract_id = env.register(CalloraVault {}, ());
+    let client = CalloraVaultClient::new(&env, &contract_id);
+
+    client.init(&owner, &Some(1000));
+
+    env.mock_all_auths();
+    let req_id = Symbol::new(&env, "req123");
+
+    // Call client directly to avoid re-entry panic inside as_contract
+    client.deduct(&caller, &200, &Some(req_id.clone()));
+
+    let events = env.events().all();
+
+    let last_event = events.last().unwrap();
+    assert_eq!(last_event.0, contract_id);
+
+    let topics = &last_event.1;
+    assert_eq!(topics.len(), 3);
+    let topic0: Symbol = topics.get(0).unwrap().into_val(&env);
+    assert_eq!(topic0, Symbol::new(&env, "deduct"));
+    let topic_caller: Address = topics.get(1).unwrap().into_val(&env);
+    assert_eq!(topic_caller, caller);
+    let topic_req_id: Symbol = topics.get(2).unwrap().into_val(&env);
+    assert_eq!(topic_req_id, req_id);
+
+    let data: (i128, i128) = last_event.2.into_val(&env);
+    assert_eq!(data, (200, 800));
 }
 
 #[test]
@@ -334,6 +439,7 @@ fn batch_deduct_success() {
     let client = CalloraVaultClient::new(&env, &contract_id);
     let (usdc_address, _, _) = create_usdc(&env, &owner);
 
+     env.mock_all_auths();
     client.init(&owner, &usdc_address, &Some(1000));
     let req1 = Symbol::new(&env, "req1");
     let req2 = Symbol::new(&env, "req2");
@@ -352,7 +458,9 @@ fn batch_deduct_success() {
             request_id: None,
         },
     ];
-    let new_balance = client.batch_deduct(&items);
+    let caller = Address::generate(&env);
+    env.mock_all_auths();
+    let new_balance = client.batch_deduct(&caller, &items);
     assert_eq!(new_balance, 650);
     assert_eq!(client.balance(), 650);
 }
@@ -366,6 +474,7 @@ fn batch_deduct_reverts_entire_batch() {
     let client = CalloraVaultClient::new(&env, &contract_id);
     let (usdc_address, _, _) = create_usdc(&env, &owner);
 
+  env.mock_all_auths();
     client.init(&owner, &usdc_address, &Some(100));
     let items = vec![
         &env,
@@ -378,7 +487,9 @@ fn batch_deduct_reverts_entire_batch() {
             request_id: None,
         }, // total 120 > 100
     ];
-    client.batch_deduct(&items);
+    let caller = Address::generate(&env);
+    env.mock_all_auths();
+    client.batch_deduct(&caller, &items);
 }
 
 #[test]
@@ -391,6 +502,7 @@ fn withdraw_owner_success() {
 
     client.init(&owner, &usdc_address, &Some(500));
     env.mock_all_auths();
+    client.init(&owner, &Some(500));
     let new_balance = client.withdraw(&200);
     assert_eq!(new_balance, 300);
     assert_eq!(client.balance(), 300);
@@ -406,6 +518,7 @@ fn withdraw_exact_balance() {
 
     client.init(&owner, &usdc_address, &Some(100));
     env.mock_all_auths();
+    client.init(&owner, &Some(100));
     let new_balance = client.withdraw(&100);
     assert_eq!(new_balance, 0);
     assert_eq!(client.balance(), 0);
@@ -422,6 +535,7 @@ fn withdraw_exceeds_balance_fails() {
 
     client.init(&owner, &usdc_address, &Some(50));
     env.mock_all_auths();
+    client.init(&owner, &Some(50));
     client.withdraw(&100);
 }
 
@@ -436,6 +550,7 @@ fn withdraw_to_success() {
 
     client.init(&owner, &usdc_address, &Some(500));
     env.mock_all_auths();
+    client.init(&owner, &Some(500));
     let new_balance = client.withdraw_to(&to, &150);
     assert_eq!(new_balance, 350);
     assert_eq!(client.balance(), 350);
@@ -444,13 +559,52 @@ fn withdraw_to_success() {
 #[test]
 #[should_panic]
 fn withdraw_without_auth_fails() {
-    // Without mock_all_auths, invoker is not the owner, so require_auth(owner) fails.
     let env = Env::default();
     let owner = Address::generate(&env);
     let contract_id = env.register(CalloraVault {}, ());
     let client = CalloraVaultClient::new(&env, &contract_id);
     let (usdc_address, _, _) = create_usdc(&env, &owner);
 
-    client.init(&owner, &usdc_address, &Some(100));
+    
+    // Need to mock auth just for init, then disable it or let withdraw fail.
+    // However mock_all_auths applies to the whole test unless explicitly managed.
+    // Instead, we can just mock_all_auths, init, then clear mock auths.
+    env.mock_all_auths();
+  client.init(&owner, &usdc_address, &Some(100));
+    // Clear mocks so withdraw fails.
+    // Wait, Soroban testutils doesn't have an easy way to clear auths in older versions...
+    // Actually, we can just drop the mock_auths or not use mock_all_auths and use mock_auths explicitly.
+    // Actually mock_all_auths just allows anything. If we need withdraw to fail due to lack of auth,
+    // we should only mock auth for init.
+    // Let's modify this test to use standard auth mocking for init explicitly, or better yet, since client.withdraw
+    // will panic without mock_all_auths, we can just not mock it for withdraw.
+    // For init, we *have* to provide auth now.
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &owner,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "init",
+            args: (&owner, Some(100i128)).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    client.init(&owner, &Some(100));
+
+    // This will fail because withdraw requires auth which is not mocked for this call
     client.withdraw(&50);
+}
+
+#[test]
+#[should_panic(expected = "vault already initialized")]
+fn init_already_initialized_panics() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let contract_id = env.register(CalloraVault {}, ());
+    let client = CalloraVaultClient::new(&env, &contract_id);
+
+    env.mock_all_auths();
+    client.init(&owner, &Some(100));
+    client.init(&owner, &Some(200)); // Should panic
 }

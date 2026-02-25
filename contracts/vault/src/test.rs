@@ -797,6 +797,24 @@ fn test_transfer_ownership() {
 }
 
 #[test]
+#[should_panic(expected = "new_owner must be different from current owner")]
+fn test_transfer_ownership_same_address_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+
+    let (contract_id, client) = create_vault(&env);
+    let (usdc_address, _, usdc_admin) = create_usdc(&env, &owner);
+
+    fund_vault(&usdc_admin, &contract_id, 100);
+    client.init(&owner, &usdc_address, &Some(100), &None, &None, &None);
+
+    // This should panic because new_owner is the same as current owner
+    client.transfer_ownership(&owner);
+}
+
+#[test]
 #[should_panic]
 fn test_transfer_ownership_not_owner() {
     let env = Env::default();

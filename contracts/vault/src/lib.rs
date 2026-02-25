@@ -414,6 +414,12 @@ impl CalloraVault {
         let mut meta = Self::get_meta(env.clone());
         meta.owner.require_auth();
 
+        // Validate new_owner is not the same as current owner
+        assert!(
+            new_owner != meta.owner,
+            "new_owner must be different from current owner"
+        );
+
         // Emit event before changing the owner, so we have the old owner
         // topics = (transfer_ownership, old_owner, new_owner)
         env.events().publish(

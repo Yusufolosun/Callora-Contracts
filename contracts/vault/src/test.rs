@@ -763,9 +763,10 @@ fn test_transfer_ownership() {
     let new_owner = Address::generate(&env);
 
     let (contract_id, client) = create_vault(&env);
-    let (usdc_address, _, _) = create_usdc(&env, &owner);
+    let (usdc_address, _, usdc_admin) = create_usdc(&env, &owner);
 
-    client.init(&owner, &usdc_address, &Some(100), &None);
+    fund_vault(&usdc_admin, &contract_id, 100);
+    client.init(&owner, &usdc_address, &Some(100), &None, &None, &None);
 
     // transfer ownership via client
     client.transfer_ownership(&new_owner);
@@ -804,12 +805,13 @@ fn test_transfer_ownership_not_owner() {
     let new_owner = Address::generate(&env);
     let _not_owner = Address::generate(&env);
 
-    let (_, client) = create_vault(&env);
-    let (usdc_address, _, _) = create_usdc(&env, &owner);
+    let (contract_id, client) = create_vault(&env);
+    let (usdc_address, _, usdc_admin) = create_usdc(&env, &owner);
 
     // Mock auth for init
     env.mock_all_auths();
-    client.init(&owner, &usdc_address, &Some(100), &None);
+    fund_vault(&usdc_admin, &contract_id, 100);
+    client.init(&owner, &usdc_address, &Some(100), &None, &None, &None);
 
     env.mock_auths(&[]); // Clear mock auths so subsequent calls require explicit valid signatures
 

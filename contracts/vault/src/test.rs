@@ -976,11 +976,16 @@ fn owner_unchanged_after_deposit_and_deduct() {
     let owner = Address::generate(&env);
     let contract_id = env.register(CalloraVault {}, ());
     let client = CalloraVaultClient::new(&env, &contract_id);
-    let (usdc_address, _, usdc_admin) = create_usdc(&env, &owner);
+    let (usdc_address, usdc_client, usdc_admin) = create_usdc(&env, &owner);
 
     env.mock_all_auths();
     fund_vault(&usdc_admin, &contract_id, 100);
     client.init(&owner, &usdc_address, &Some(100), &None, &None, &None);
+
+    // Fund owner and approve for deposit
+    fund_user(&usdc_admin, &owner, 50);
+    approve_spend(&env, &usdc_client, &owner, &contract_id, 50);
+
     client.deposit(&owner, &50);
     client.deduct(&owner, &30, &None);
 

@@ -1,101 +1,8 @@
 extern crate std;
 
 use super::*;
-use soroban_sdk::testutils::{Address as _, Events as _};
-use soroban_sdk::{token, vec, IntoVal, Symbol};
-
-fn create_usdc<'a>(
-    env: &'a Env,
-    admin: &Address,
-) -> (Address, token::Client<'a>, token::StellarAssetClient<'a>) {
-    let contract_address = env.register_stellar_asset_contract_v2(admin.clone());
-    let address = contract_address.address();
-    let client = token::Client::new(env, &address);
-    let admin_client = token::StellarAssetClient::new(env, &address);
-    (address, client, admin_client)
-}
-
-fn create_vault(env: &Env) -> (Address, CalloraVaultClient<'_>) {
-    let address = env.register(CalloraVault, ());
-    let client = CalloraVaultClient::new(env, &address);
-    (address, client)
-}
-
-fn fund_vault(
-    usdc_admin_client: &token::StellarAssetClient,
-    vault_address: &Address,
-    amount: i128,
-) {
-    usdc_admin_client.mint(vault_address, &amount);
-}
-
-fn fund_user(usdc_admin_client: &token::StellarAssetClient, user: &Address, amount: i128) {
-    usdc_admin_client.mint(user, &amount);
-}
-
-/// Approve spender to transfer amount from from (for deposit tests; from must have auth).
-fn approve_spend(
-    _env: &Env,
-    usdc_client: &token::Client,
-    from: &Address,
-    spender: &Address,
-    amount: i128,
-) {
-    // expiration_ledger 0 = no expiration in Stellar Asset Contract
-    usdc_client.approve(from, spender, &amount, &0u32);
-}
-
-/// Logs approximate CPU/instruction and fee for init, deposit, deduct, and balance.
-/// Run with: cargo test --ignored vault_operation_costs -- --nocapture
-/// Requires invocation cost metering; may panic on default test env.
-#[test]
-#[ignore]
-fn vault_operation_costs() {
-    let env = Env::default();
-    let owner = Address::generate(&env);
-    // Register contract instance with a unique salt (owner) to avoid address reuse
-    let contract_id = env.register(CalloraVault {}, (owner.clone(),));
-    let client = CalloraVaultClient::new(&env, &contract_id);
-    let (usdc, _, _) = create_usdc(&env, &owner);
-
-    env.mock_all_auths();
-
-    client.init(&owner, &usdc, &Some(0), &None, &None, &None);
-    let res = env.cost_estimate().resources();
-    let fee = env.cost_estimate().fee();
-    std::println!(
-        "init: instructions={} fee_total={}",
-        res.instructions,
-        fee.total
-    );
-
-    client.deposit(&owner, &100);
-    let res = env.cost_estimate().resources();
-    let fee = env.cost_estimate().fee();
-    std::println!(
-        "deposit: instructions={} fee_total={}",
-        res.instructions,
-        fee.total
-    );
-
-    client.deduct(&owner, &50, &None);
-    let res = env.cost_estimate().resources();
-    let fee = env.cost_estimate().fee();
-    std::println!(
-        "deduct: instructions={} fee_total={}",
-        res.instructions,
-        fee.total
-    );
-
-    let _ = client.balance();
-    let res = env.cost_estimate().resources();
-    let fee = env.cost_estimate().fee();
-    std::println!(
-        "balance: instructions={} fee_total={}",
-        res.instructions,
-        fee.total
-    );
-}
+use soroban_sdk::testutils::{Address as _, Events};
+use soroban_sdk::{IntoVal, Symbol};
 
 #[test]
 fn init_and_balance() {
@@ -103,14 +10,33 @@ fn init_and_balance() {
     let owner = Address::generate(&env);
     let contract_id = env.register(CalloraVault {}, ());
 
-    let client = CalloraVaultClient::new(&env, &contract_id);
-    let (usdc, _, usdc_admin) = create_usdc(&env, &owner);
-    env.mock_all_auths();
-    fund_vault(&usdc_admin, &contract_id, 1000);
-    client.init(&owner, &usdc, &Some(1000), &None, &None, &None);
-    let _events = env.events().all();
+    // Call init directly inside as_contract so events are captured
+    let events = env.as_contract(&contract_id, || {
+        CalloraVault::init(env.clone(), owner.clone(), Some(1000));
+        env.events().all()
+    });
 
+    // Verify balance through client
+    let client = CalloraVaultClient::new(&env, &contract_id);
     assert_eq!(client.balance(), 1000);
+
+    // Verify "init" event was emitted
+    let last_event = events.last().expect("expected at least one event");
+
+    // Contract ID matches
+    assert_eq!(last_event.0, contract_id);
+
+    // Topic 0 = Symbol("init"), Topic 1 = owner address
+    let topics = &last_event.1;
+    assert_eq!(topics.len(), 2);
+    let topic0: Symbol = topics.get(0).unwrap().into_val(&env);
+    let topic1: Address = topics.get(1).unwrap().into_val(&env);
+    assert_eq!(topic0, Symbol::new(&env, "init"));
+    assert_eq!(topic1, owner);
+
+    // Data = initial balance as i128
+    let data: i128 = last_event.2.into_val(&env);
+    assert_eq!(data, 1000);
 }
 
 #[test]
@@ -120,120 +46,148 @@ fn deposit_and_deduct() {
     let contract_id = env.register(CalloraVault {}, ());
     let client = CalloraVaultClient::new(&env, &contract_id);
 
-    let (usdc, usdc_client, usdc_admin) = create_usdc(&env, &owner);
+    client.init(&owner, &Some(100));
+
     env.mock_all_auths();
-    fund_vault(&usdc_admin, &contract_id, 100);
-    client.init(&owner, &usdc, &Some(100), &None, &None, &None);
-    fund_user(&usdc_admin, &owner, 200);
-    approve_spend(&env, &usdc_client, &owner, &contract_id, 200);
     client.deposit(&owner, &200);
     assert_eq!(client.balance(), 300);
-    client.deduct(&owner, &50, &None);
+
+    client.deduct(&50);
     assert_eq!(client.balance(), 250);
 }
 
-/// Test that verifies consistency between balance() and get_meta() after init, deposit, and deduct.
-/// This ensures that both methods return the same balance value and that the owner remains unchanged.
 #[test]
-fn balance_and_meta_consistency() {
+fn owner_can_deposit() {
     let env = Env::default();
     let owner = Address::generate(&env);
     let contract_id = env.register(CalloraVault {}, ());
     let client = CalloraVaultClient::new(&env, &contract_id);
 
+    client.init(&owner, &Some(100));
+
+    // Mock the owner as the invoker
     env.mock_all_auths();
-    let (usdc_address, usdc_client, usdc_admin) = create_usdc(&env, &owner);
-    fund_vault(&usdc_admin, &contract_id, 500);
-    client.init(&owner, &usdc_address, &Some(500), &None, &None, &None);
+    client.deposit(&owner, &200);
 
-    let meta = client.get_meta();
-    let balance = client.balance();
-    assert_eq!(meta.balance, balance, "balance mismatch after init");
-    assert_eq!(meta.owner, owner, "owner changed after init");
-    assert_eq!(balance, 500, "incorrect balance after init");
+    assert_eq!(client.balance(), 300);
+}
 
-    fund_user(&usdc_admin, &owner, 425);
-    approve_spend(&env, &usdc_client, &owner, &contract_id, 425);
-    client.deposit(&owner, &300);
-    let meta = client.get_meta();
-    let balance = client.balance();
-    assert_eq!(meta.balance, balance, "balance mismatch after deposit");
-    assert_eq!(balance, 800, "incorrect balance after deposit");
+#[test]
+fn allowed_depositor_can_deposit() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let depositor = Address::generate(&env);
+    let contract_id = env.register(CalloraVault {}, ());
+    let client = CalloraVaultClient::new(&env, &contract_id);
 
-    client.deduct(&owner, &150, &None);
-    let meta = client.get_meta();
-    let balance = client.balance();
-    assert_eq!(meta.balance, balance, "balance mismatch after deduct");
-    assert_eq!(balance, 650, "incorrect balance after deduct");
+    client.init(&owner, &Some(100));
 
-    fund_user(&usdc_admin, &owner, 125);
-    approve_spend(&env, &usdc_client, &owner, &contract_id, 125);
-    client.deposit(&owner, &100);
-    client.deduct(&owner, &50, &None);
+    // Owner sets the allowed depositor
+    env.mock_all_auths();
+    client.set_allowed_depositor(&owner, &Some(depositor.clone()));
+
+    // Depositor can now deposit
+    client.deposit(&depositor, &50);
+    assert_eq!(client.balance(), 150);
+}
+
+#[test]
+#[should_panic(expected = "unauthorized: only owner or allowed depositor can deposit")]
+fn unauthorized_address_cannot_deposit() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let contract_id = env.register(CalloraVault {}, ());
+    let client = CalloraVaultClient::new(&env, &contract_id);
+
+    client.init(&owner, &Some(100));
+
+    // Try to deposit as unauthorized address (should panic)
+    env.mock_all_auths();
+    let unauthorized_addr = Address::generate(&env);
+    client.deposit(&unauthorized_addr, &50);
+}
+
+#[test]
+fn owner_can_set_allowed_depositor() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let depositor = Address::generate(&env);
+    let contract_id = env.register(CalloraVault {}, ());
+    let client = CalloraVaultClient::new(&env, &contract_id);
+
+    client.init(&owner, &Some(100));
+
+    // Owner sets allowed depositor
+    env.mock_all_auths();
+    client.set_allowed_depositor(&owner, &Some(depositor.clone()));
+
+    // Depositor can deposit
+    client.deposit(&depositor, &25);
+    assert_eq!(client.balance(), 125);
+}
+
+#[test]
+fn owner_can_clear_allowed_depositor() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let depositor = Address::generate(&env);
+    let contract_id = env.register(CalloraVault {}, ());
+    let client = CalloraVaultClient::new(&env, &contract_id);
+
+    client.init(&owner, &Some(100));
+
+    env.mock_all_auths();
+
+    // Set depositor
+    client.set_allowed_depositor(&owner, &Some(depositor.clone()));
+    client.deposit(&depositor, &50);
+    assert_eq!(client.balance(), 150);
+
+    // Clear depositor
+    client.set_allowed_depositor(&owner, &None);
+
+    // Depositor can no longer deposit (would panic if attempted)
+    // Owner can still deposit
     client.deposit(&owner, &25);
-    let meta = client.get_meta();
-    let balance = client.balance();
-    assert_eq!(
-        meta.balance, balance,
-        "balance mismatch after multiple operations"
-    );
-    assert_eq!(balance, 725, "incorrect final balance");
+    assert_eq!(client.balance(), 175);
 }
 
 #[test]
-#[should_panic(expected = "insufficient balance")]
-fn deduct_exact_balance_and_panic() {
+#[should_panic(expected = "unauthorized: owner only")]
+fn non_owner_cannot_set_allowed_depositor() {
     let env = Env::default();
     let owner = Address::generate(&env);
+    let depositor = Address::generate(&env);
     let contract_id = env.register(CalloraVault {}, ());
     let client = CalloraVaultClient::new(&env, &contract_id);
 
-    let (usdc_address, _, usdc_admin) = create_usdc(&env, &owner);
+    client.init(&owner, &Some(100));
+
+    // Try to set allowed depositor as non-owner (should panic)
     env.mock_all_auths();
-    fund_vault(&usdc_admin, &contract_id, 100);
-    client.init(&owner, &usdc_address, &Some(100), &None, &None, &None);
-    assert_eq!(client.balance(), 100);
-
-    client.deduct(&owner, &100, &None);
-    assert_eq!(client.balance(), 0);
-
-    client.deduct(&owner, &1, &None);
+    let non_owner_addr = Address::generate(&env);
+    client.set_allowed_depositor(&non_owner_addr, &Some(depositor));
 }
 
 #[test]
-fn deduct_event_emission() {
+#[should_panic(expected = "unauthorized: only owner or allowed depositor can deposit")]
+fn deposit_after_depositor_cleared_is_rejected() {
     let env = Env::default();
     let owner = Address::generate(&env);
-    let caller = Address::generate(&env);
+    let depositor = Address::generate(&env);
     let contract_id = env.register(CalloraVault {}, ());
     let client = CalloraVaultClient::new(&env, &contract_id);
 
-    let (usdc_address, _, usdc_admin) = create_usdc(&env, &owner);
+    client.init(&owner, &Some(100));
+
     env.mock_all_auths();
-    fund_vault(&usdc_admin, &contract_id, 1000);
-    client.init(&owner, &usdc_address, &Some(1000), &None, &None, &None);
-    let req_id = Symbol::new(&env, "req123");
 
-    // Call client directly to avoid re-entry panic inside as_contract
-    client.deduct(&caller, &200, &Some(req_id.clone()));
+    // Set and then clear depositor
+    client.set_allowed_depositor(&owner, &Some(depositor.clone()));
+    client.set_allowed_depositor(&owner, &None);
 
-    let events = env.events().all();
-
-    let last_event = events.last().unwrap();
-    assert_eq!(last_event.0, contract_id);
-
-    let topics = &last_event.1;
-    assert_eq!(topics.len(), 3);
-    let topic0: Symbol = topics.get(0).unwrap().into_val(&env);
-    assert_eq!(topic0, Symbol::new(&env, "deduct"));
-    let topic_caller: Address = topics.get(1).unwrap().into_val(&env);
-    assert_eq!(topic_caller, caller);
-    let topic_req_id: Symbol = topics.get(2).unwrap().into_val(&env);
-    assert_eq!(topic_req_id, req_id);
-
-    let data: (i128, i128) = last_event.2.into_val(&env);
-    assert_eq!(data, (200, 800));
-}
+    // Depositor should no longer be able to deposit
+    client.deposit(&depositor, &50);
 
 #[test]
 fn test_init_success() {

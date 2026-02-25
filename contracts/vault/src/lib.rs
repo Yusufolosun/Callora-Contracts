@@ -71,74 +71,73 @@ impl CalloraVault {
         // Emit event: topics = (init, owner), data = balance
         env.events()
             .publish((Symbol::new(&env, "init"), owner.clone()), balance);
-
         meta
     }
+}
 
-    /// Check if the caller is authorized to deposit (owner or allowed depositor).
-    fn is_authorized_depositor(env: &Env, caller: &Address) -> bool {
-        let meta = Self::get_meta(env.clone());
+/// Check if the caller is authorized to deposit (owner or allowed depositor).
+fn is_authorized_depositor(env: &Env, caller: &Address) -> bool {
+    let meta = Self::get_meta(env.clone());
+    // Owner is always authorized
+    if caller == &meta.owner {
+        return true;
+    }
 
-        // Owner is always authorized
-        if caller == &meta.owner {
+    // Check if caller is the allowed depositor
+    if let Some(allowed) = env
+        .storage()
+        .instance()
+        .get::<StorageKey, Address>(&StorageKey::AllowedDepositor)
+    {
+        if caller == &allowed {
             return true;
         }
+    }
 
-        // Check if caller is the allowed depositor
-        if let Some(allowed) = env
-            .storage()
-            .instance()
-            .get::<StorageKey, Address>(&StorageKey::AllowedDepositor)
-        {
-            if caller == &allowed {
-                return true;
-            }
+    false
+}
+
+/// Require that the caller is the owner, panic otherwise.
+fn require_owner(env: &Env, caller: &Address) {
+    let meta = Self::get_meta(env.clone());
+    assert!(caller == &meta.owner, "unauthorized: owner only");
+}
+
+/// Get vault metadata (owner and balance).
+///
+/// # Panics
+/// - If the vault has not been initialized
+pub fn get_meta(env: Env) -> VaultMeta {
+    env.storage()
+        .instance()
+        .get(&StorageKey::Meta)
+        .unwrap_or_else(|| panic!("vault not initialized"))
+}
+
+/// Set or clear the allowed depositor address. Owner-only.
+/// Pass `None` to revoke depositor access, `Some(address)` to grant or update.
+pub fn set_allowed_depositor(env: Env, caller: Address, depositor: Option<Address>) {
+    caller.require_auth();
+    Self::require_owner(&env, &caller);
+
+    match depositor {
+        Some(addr) => {
+            env.storage()
+                .instance()
+                .set(&StorageKey::AllowedDepositor, &addr);
         }
-
-        false
-    }
-
-    /// Require that the caller is the owner, panic otherwise.
-    fn require_owner(env: &Env, caller: &Address) {
-        let meta = Self::get_meta(env.clone());
-        assert!(caller == &meta.owner, "unauthorized: owner only");
-    }
-
-    /// Get vault metadata (owner and balance).
-    ///
-    /// # Panics
-    /// - If the vault has not been initialized
-    pub fn get_meta(env: Env) -> VaultMeta {
-        env.storage()
-            .instance()
-            .get(&StorageKey::Meta)
-            .unwrap_or_else(|| panic!("vault not initialized"))
-    }
-
-    /// Set or clear the allowed depositor address. Owner-only.
-    /// Pass `None` to revoke depositor access, `Some(address)` to grant or update.
-    pub fn set_allowed_depositor(env: Env, caller: Address, depositor: Option<Address>) {
-        caller.require_auth();
-        Self::require_owner(&env, &caller);
-
-        match depositor {
-            Some(addr) => {
-                env.storage()
-                    .instance()
-                    .set(&StorageKey::AllowedDepositor, &addr);
-            }
-            None => {
-                env.storage()
-                    .instance()
-                    .remove(&StorageKey::AllowedDepositor);
-            }
+        None => {
+            env.storage()
+                .instance()
+                .remove(&StorageKey::AllowedDepositor);
         }
     }
+}
 
-    /// Deposit increases balance. Callable by owner or designated depositor.
-    /// Emits a "deposit" event with the depositor address and amount.
-    pub fn deposit(env: Env, from: Address, amount: i128) -> i128 {
-        from.require_auth();
+/// Deposit increases balance. Callable by owner or designated depositor.
+/// Emits a "deposit" event with the depositor address and amount.
+pub fn deposit(env: Env, from: Address, amount: i128) -> i128 {
+    from.require_auth();
     pub fn deposit(env: Env, caller: Address, amount: i128) -> i128 {
         caller.require_auth();
         assert!(amount > 0, "amount must be positive");
@@ -204,5 +203,6 @@ impl CalloraVault {
             .set(&Symbol::new(&env, "meta"), &meta);
     }
 }
+
 #[cfg(test)]
 mod test;

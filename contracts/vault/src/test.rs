@@ -274,22 +274,22 @@ fn owner_can_clear_allowed_depositor() {
 
     client.init(&owner, &Some(100));
 
-#[test]
-fn deduct_returns_new_balance() {
-    let env = Env::default();
-    env.mock_all_auths();
+    #[test]
+    fn deduct_returns_new_balance() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-    // Set depositor
-    client.set_allowed_depositor(&owner, &Some(depositor.clone()));
-    client.deposit(&depositor, &50);
-    assert_eq!(client.balance(), 150);
+        // Set depositor
+        client.set_allowed_depositor(&owner, &Some(depositor.clone()));
+        client.deposit(&depositor, &50);
+        assert_eq!(client.balance(), 150);
 
-    fund_vault(&usdc_admin, &vault_address, 100);
-    vault.init(&owner, &usdc_address, &Some(100), &None, &None, &None);
-    let new_balance = vault.deduct(&owner, &30, &None);
-    assert_eq!(new_balance, 70);
-    assert_eq!(vault.balance(), 70);
-}
+        fund_vault(&usdc_admin, &vault_address, 100);
+        vault.init(&owner, &usdc_address, &Some(100), &None, &None, &None);
+        let new_balance = vault.deduct(&owner, &30, &None);
+        assert_eq!(new_balance, 70);
+        assert_eq!(vault.balance(), 70);
+    }
     // Clear depositor
     client.set_allowed_depositor(&owner, &None);
 

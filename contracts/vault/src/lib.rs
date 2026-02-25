@@ -167,7 +167,6 @@ impl CalloraVault {
     /// Emits a "deposit" event with amount and new balance.
     pub fn deposit(env: Env, amount: i128) -> i128 {
         assert!(amount > 0, "amount must be positive");
-        from.require_auth();
         let mut meta = Self::get_meta(env.clone());
         assert!(
             amount >= meta.min_deposit,
